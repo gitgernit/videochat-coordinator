@@ -5,7 +5,8 @@ import (
 )
 
 type Config struct {
-	GRPCServerPort int `env:"GRPC_SERVER_PORT" env-default:"9090"`
+	GRPCServerHost string `env:"GRPC_SERVER_HOST" env-default:"localhost"`
+	GRPCServerPort int    `env:"GRPC_SERVER_PORT" env-default:"9090"`
 }
 
 func New() (*Config, error) {

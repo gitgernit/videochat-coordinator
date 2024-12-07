@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
-	"gitlab.crja72.ru/gospec/go5/coordinator/internal/config"
-	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"gitlab.crja72.ru/gospec/go5/coordinator/internal/config"
+	"gitlab.crja72.ru/gospec/go5/coordinator/internal/domain/pingpong"
+	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
 )
 
 var (
@@ -18,9 +21,15 @@ func main() {
 	mainLogger := logger.New(serviceName)
 	ctx = context.WithValue(ctx, logger.LoggerKey, mainLogger)
 
-	_, err := config.New()
+	cfg, err := config.New()
 	if err != nil {
 		mainLogger.Error(ctx, err.Error())
+		return
+	}
+
+	pingInteractor, err := pingpong.NewPingInteractor(ctx, cfg.GRPCServerHost, cfg.GRPCServerPort, mainLogger)
+	if err != nil {
+		mainLogger.Error(ctx, fmt.Sprintf("Failed to initialise PingInteractor: %v", err))
 		return
 	}
 
@@ -29,7 +38,17 @@ func main() {
 
 	mainLogger.Info(ctx, "Successfully started")
 
+	go func() {
+		if err := pingInteractor.Start(ctx); err != nil {
+			mainLogger.Error(ctx, err.Error())
+		}
+	}()
+
 	<-graceCh
+
+	if err := pingInteractor.Stop(); err != nil {
+		mainLogger.Error(ctx, err.Error())
+	}
 
 	mainLogger.Info(ctx, "Successfully shut down")
 }
