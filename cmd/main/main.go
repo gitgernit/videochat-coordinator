@@ -10,6 +10,7 @@ import (
 	"gitlab.crja72.ru/gospec/go5/coordinator/internal/config"
 	"gitlab.crja72.ru/gospec/go5/coordinator/internal/domain/pingpong"
 	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
+	"go.uber.org/zap"
 )
 
 var (
@@ -18,7 +19,7 @@ var (
 
 func main() {
 	ctx := context.Background()
-	mainLogger := logger.New(serviceName)
+	mainLogger := logger.New(zap.DebugLevel, serviceName)
 	ctx = context.WithValue(ctx, logger.LoggerKey, mainLogger)
 
 	cfg, err := config.New()

@@ -22,10 +22,10 @@ github.com/rogpeppe/go-internal v1.13.1 h1:KvO1DLK/DRN07sQ1LQKScxyZJuNnedQ5/wKSR
 github.com/rogpeppe/go-internal v1.13.1/go.mod h1:uMEvuHeurkdAXX61udpOXGD/AzZDWNMNyH2VO9fmH0o=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
-gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241205214847-709b71565fcb h1:Qp8gFFigRwI39Jh11xYSsnTnt0XYmHdtTTHy/6G1+8Y=
-gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241205214847-709b71565fcb/go.mod h1:jdIadk26IphBbkUt4YFxtvqydsBnvYJvHcKcVSUQtjk=
-gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241206183921-eb4332686f86 h1:fhbVvCLRvxduPuDb9K23ITBNFZAJjmyH06lHDmb3jlk=
-gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241206183921-eb4332686f86/go.mod h1:af1CfgBjR8JecL8wL+tcI83rYMUr779LWW4ZSHKmLGI=
+gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241206104919-540a340c30ac h1:2zT8Gpc35zpAiGLWjgEVeonFWCZn6waNdooKJlYOAJc=
+gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241206104919-540a340c30ac/go.mod h1:jdIadk26IphBbkUt4YFxtvqydsBnvYJvHcKcVSUQtjk=
+gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241207185328-fa616e2298df h1:2f5GdAfNYsnsWqw7b5qAlCp6rdQf3XJDrqERisIVhis=
+gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241207185328-fa616e2298df/go.mod h1:+AqJYe7GG03i5K36Ej4QtMlb90Mu/pX2+jCFnyyw7D0=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
 go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
 go.uber.org/multierr v1.10.0 h1:S0h4aNzvfcFsC3dRF1jLoaov7oRaKqRGC/pUEJ2yvPQ=

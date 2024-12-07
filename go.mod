@@ -4,17 +4,17 @@ go 1.23.2
 
 require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
-	gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241205214847-709b71565fcb
-	gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241206183921-eb4332686f86
+	github.com/joho/godotenv v1.5.1
+	gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241206104919-540a340c30ac
+	gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241207185328-fa616e2298df
+	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.68.1
 )
 
 require (
 	github.com/BurntSushi/toml v1.2.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/net v0.29.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect
 	golang.org/x/text v0.20.0 // indirect

@@ -53,7 +53,7 @@ func (p *PingInteractor) Start(ctx context.Context) error {
 			if err := p.stream.Send(req); err != nil {
 				return fmt.Errorf("failed to send a ping request: %v", err)
 			}
-			p.logger.Info(ctx, fmt.Sprintf("Sent a ping request: %v", req))
+			p.logger.Debug(ctx, fmt.Sprintf("Sent a ping request: %v", req))
 		}
 	}
 }
