@@ -3,65 +3,73 @@ package pingpong
 import (
 	"context"
 	"fmt"
-	"time"
-
-	pb "gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go/proto"
+	"gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go/proto"
 	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"time"
 )
 
 type PingInteractor struct {
-	ticker *time.Ticker
-	stream pb.RoomsService_PingPongClient
-	client pb.RoomsServiceClient
-	conn   *grpc.ClientConn
 	logger logger.Logger
 }
 
-func NewPingInteractor(ctx context.Context, grpcHost string, grpcPort int, logger logger.Logger) (*PingInteractor, error) {
-	conn, err := grpc.NewClient(fmt.Sprintf("%v:%v", grpcHost, grpcPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to gRPC server: %v", err)
-	}
-
-	client := pb.NewRoomsServiceClient(conn)
-	stream, err := client.PingPong(ctx)
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to open the stream: %v", err)
-	}
-
+func NewPingInteractor(logger logger.Logger) (*PingInteractor, error) {
 	return &PingInteractor{
-		ticker: time.NewTicker(time.Second),
-		client: client,
-		conn:   conn,
-		stream: stream,
 		logger: logger,
 	}, nil
 }
 
-func (p *PingInteractor) Start(ctx context.Context) error {
-	defer p.conn.Close()
-	counter := uint32(0)
+func (p *PingInteractor) Start(ctx context.Context, grpcHost string, grpcPort int) error {
+	ticker := time.NewTicker(time.Second * 1)
+	defer ticker.Stop()
+
+	var counter uint32 = 0
+
+	conn, err := grpc.NewClient(
+		fmt.Sprintf("%v:%v", grpcHost, grpcPort),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	defer func(conn *grpc.ClientConn) {
+		err := conn.Close()
+		if err != nil {
+			p.logger.Error(ctx, "couldn't close connection", zap.Error(err))
+		}
+	}(conn)
+	if err != nil {
+		return fmt.Errorf("failed to connect to gRPC server: %v", err)
+	}
+
+	client := proto.NewRoomsServiceClient(conn)
+	stream, err := client.PingPong(ctx)
+	if err != nil {
+		return err
+	}
 
 	for {
 		select {
-		case <-p.ticker.C:
-			counter++
-			req := &pb.Ping{Counter: counter}
-			if err := p.stream.Send(req); err != nil {
+		case <-ticker.C:
+			ping := Ping{Counter: counter}
+			req := &proto.Ping{Counter: ping.Counter}
+			if err := stream.Send(req); err != nil {
 				return fmt.Errorf("failed to send a ping request: %v", err)
 			}
-			p.logger.Debug(ctx, fmt.Sprintf("Sent a ping request: %v", req))
+			p.logger.Debug(ctx, "sent a ping request", zap.Uint32("counter", req.Counter))
+
+			pong, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			p.logger.Debug(ctx, "received a pong response", zap.Uint32("counter", pong.Counter))
+
+			counter = pong.Counter
+
+		case <-ctx.Done():
+			err := ctx.Err()
+			if err != nil {
+				return err
+			}
 		}
 	}
-}
-
-func (p *PingInteractor) Stop() error {
-	p.ticker.Stop()
-	if err := p.stream.CloseSend(); err != nil {
-		return fmt.Errorf("Error when closing a stream: %v", err)
-	}
-	return nil
 }

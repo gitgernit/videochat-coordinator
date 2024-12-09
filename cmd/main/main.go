@@ -20,7 +20,7 @@ var (
 func main() {
 	ctx := context.Background()
 	mainLogger := logger.New(zap.DebugLevel, serviceName)
-	ctx = context.WithValue(ctx, logger.LoggerKey, mainLogger)
+	ctx, cancel := context.WithCancel(context.WithValue(ctx, logger.LoggerKey, mainLogger))
 
 	cfg, err := config.New()
 	if err != nil {
@@ -28,28 +28,26 @@ func main() {
 		return
 	}
 
-	pingInteractor, err := pingpong.NewPingInteractor(ctx, cfg.GRPCServerHost, cfg.GRPCServerPort, mainLogger)
+	pingInteractor, err := pingpong.NewPingInteractor(mainLogger)
 	if err != nil {
-		mainLogger.Error(ctx, fmt.Sprintf("Failed to initialise PingInteractor: %v", err))
+		mainLogger.Error(ctx, fmt.Sprintf("failed to initialise PingInteractor: %v", err))
 		return
 	}
 
 	graceCh := make(chan os.Signal, 1)
 	signal.Notify(graceCh, syscall.SIGINT, syscall.SIGTERM)
 
-	mainLogger.Info(ctx, "Successfully started")
+	mainLogger.Info(ctx, "successfully started")
 
 	go func() {
-		if err := pingInteractor.Start(ctx); err != nil {
+		if err := pingInteractor.Start(ctx, cfg.GRPCServerHost, cfg.GRPCServerPort); err != nil {
 			mainLogger.Error(ctx, err.Error())
 		}
 	}()
 
 	<-graceCh
 
-	if err := pingInteractor.Stop(); err != nil {
-		mainLogger.Error(ctx, err.Error())
-	}
+	cancel()
 
-	mainLogger.Info(ctx, "Successfully shut down")
+	mainLogger.Info(ctx, "successfully shut down")
 }
