@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"io"
 )
 
 const (
@@ -55,9 +56,13 @@ func (i CoordinatorInteractor) ListenForRooms(ctx context.Context) error {
 
 	for {
 		room, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
+
 		i.logger.Debug(ctx, "received new room", zap.String("room_id", room.Id))
 
 		err = i.SpawnDispatcher(ctx, room.Id)
@@ -129,6 +134,9 @@ func (i DispatcherInteractor) Listen(ctx context.Context) error {
 
 	for {
 		msg, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -137,7 +145,7 @@ func (i DispatcherInteractor) Listen(ctx context.Context) error {
 		switch m := method.(type) {
 		case *proto.RoomMethod_MessageReceived:
 			update := m.MessageReceived
-			i.logger.Debug(ctx, "message received", zap.String("text", update.Text), zap.String("username", update.Username))
+			i.logger.Debug(ctx, "message received", zap.String("text", update.Text), zap.String("username", update.Username), zap.String("room_id", i.RoomID))
 		}
 	}
 }
