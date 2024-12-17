@@ -3,6 +3,8 @@ package dispatchers
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/pion/webrtc/v4"
 	"gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go/proto"
 	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
 	"go.uber.org/zap"
@@ -90,6 +92,7 @@ func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID strin
 
 type DispatcherInteractor struct {
 	logger   logger.Logger
+	Users    map[*webrtc.PeerConnection]User
 	RoomID   string
 	GrpcHost string
 	GrpcPort int
@@ -98,13 +101,14 @@ type DispatcherInteractor struct {
 func NewDispatcherInteractor(logger logger.Logger, roomID string, grpcHost string, grpcPort int) (*DispatcherInteractor, error) {
 	return &DispatcherInteractor{
 		logger:   logger,
+		Users:    make(map[*webrtc.PeerConnection]User),
 		RoomID:   roomID,
 		GrpcHost: grpcHost,
 		GrpcPort: grpcPort,
 	}, nil
 }
 
-func (i DispatcherInteractor) Listen(ctx context.Context) error {
+func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 	conn, err := grpc.NewClient(
 		fmt.Sprintf("%v:%v", i.GrpcHost, i.GrpcPort),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -146,6 +150,38 @@ func (i DispatcherInteractor) Listen(ctx context.Context) error {
 		case *proto.RoomMethod_MessageReceived:
 			update := m.MessageReceived
 			i.logger.Debug(ctx, "message received", zap.String("text", update.Text), zap.String("username", update.Username), zap.String("room_id", i.RoomID))
+		case *proto.RoomMethod_RoomUsers_:
+			update := m.RoomUsers_
+			i.logger.Debug(ctx, "room users received", zap.Any("room_users", update.Users))
 		}
 	}
+}
+
+func (i *DispatcherInteractor) initializePeerConnection(userID uuid.UUID, username string) ([]webrtc.SessionDescription, error) {
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	pc, err := webrtc.NewPeerConnection(config)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cErr := pc.Close(); cErr != nil {
+			i.logger.Error(context.Background(), "cannot close peerConnection", zap.Error(cErr))
+		}
+	}()
+
+	user := User{
+		Id:   userID,
+		Name: username,
+	}
+
+	i.Users[pc] = user
+
+	return []webrtc.SessionDescription{}, nil
 }
