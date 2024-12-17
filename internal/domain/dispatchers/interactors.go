@@ -9,11 +9,10 @@ import (
 	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 	"io"
+	"slices"
 )
 
 const (
@@ -69,7 +68,7 @@ func (i CoordinatorInteractor) ListenForRooms(ctx context.Context) error {
 
 		err = i.SpawnDispatcher(ctx, room.Id)
 		if err != nil {
-			return status.Error(codes.Internal, "couldnt spawn a dispatcher")
+			return err
 		}
 	}
 }
@@ -91,20 +90,20 @@ func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID strin
 }
 
 type DispatcherInteractor struct {
-	logger   logger.Logger
-	Users    map[*webrtc.PeerConnection]User
-	RoomID   string
-	GrpcHost string
-	GrpcPort int
+	logger     logger.Logger
+	UsersPeers map[User]*webrtc.PeerConnection
+	RoomID     string
+	GrpcHost   string
+	GrpcPort   int
 }
 
 func NewDispatcherInteractor(logger logger.Logger, roomID string, grpcHost string, grpcPort int) (*DispatcherInteractor, error) {
 	return &DispatcherInteractor{
-		logger:   logger,
-		Users:    make(map[*webrtc.PeerConnection]User),
-		RoomID:   roomID,
-		GrpcHost: grpcHost,
-		GrpcPort: grpcPort,
+		logger:     logger,
+		UsersPeers: make(map[User]*webrtc.PeerConnection),
+		RoomID:     roomID,
+		GrpcHost:   grpcHost,
+		GrpcPort:   grpcPort,
 	}, nil
 }
 
@@ -153,11 +152,86 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 		case *proto.RoomMethod_RoomUsers_:
 			update := m.RoomUsers_
 			i.logger.Debug(ctx, "room users received", zap.Any("room_users", update.Users))
+
+			roomUsers := make([]User, 0, len(update.Users)-1)
+			sdps := make([]*proto.SDP, 0, len(roomUsers))
+
+			for _, protoUser := range update.Users {
+				if protoUser.Username == dispatcherUsername {
+					continue
+				}
+
+				userID, err := uuid.Parse(protoUser.Id)
+				if err != nil {
+					return err
+				}
+
+				user := User{Id: userID, Name: protoUser.Username}
+				roomUsers = append(roomUsers, user)
+			}
+
+			for user, pc := range i.UsersPeers {
+				if user.Name == dispatcherUsername {
+					continue
+				}
+
+				if !slices.Contains(roomUsers, user) {
+					delete(i.UsersPeers, user)
+					err := pc.Close()
+					if err != nil {
+						i.logger.Error(ctx, "couldnt close inactive peer connection")
+					}
+				}
+			}
+
+			for _, user := range roomUsers {
+				if user.Name == dispatcherUsername {
+					continue
+				}
+
+				pc, ok := i.UsersPeers[user]
+				if !ok {
+					pc, err = i.initializePeerConnection()
+					if err != nil {
+						return err
+					}
+
+					i.UsersPeers[user] = pc
+				}
+
+				if err := i.createDatachannel(pc); err != nil {
+					return err
+				}
+
+				if err := i.createOffer(pc); err != nil {
+					return err
+				}
+
+				sdp := pc.LocalDescription()
+				sdps = append(sdps, &proto.SDP{
+					Type:     sdp.Type.String(),
+					Sdp:      sdp.SDP,
+					Username: user.Name,
+				})
+			}
+
+			method := &proto.RoomMethod{
+				Method: &proto.RoomMethod_SendSdp{
+					SendSdp: &proto.SendSDP{
+						Sdp: sdps,
+					},
+				},
+			}
+
+			err := stream.Send(method)
+			if err != nil {
+				return err
+			}
 		}
 	}
 }
 
-func (i *DispatcherInteractor) initializePeerConnection(userID uuid.UUID, username string) ([]webrtc.SessionDescription, error) {
+func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnection, error) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -170,18 +244,35 @@ func (i *DispatcherInteractor) initializePeerConnection(userID uuid.UUID, userna
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if cErr := pc.Close(); cErr != nil {
-			i.logger.Error(context.Background(), "cannot close peerConnection", zap.Error(cErr))
-		}
-	}()
 
-	user := User{
-		Id:   userID,
-		Name: username,
+	return pc, nil
+}
+
+func (i *DispatcherInteractor) createDatachannel(pc *webrtc.PeerConnection) error {
+	dataChannel, err := pc.CreateDataChannel(dispatcherUsername, nil)
+	if err != nil {
+		return err
 	}
 
-	i.Users[pc] = user
+	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
+		fmt.Printf("Received message: %s\n", msg.Data)
+	})
 
-	return []webrtc.SessionDescription{}, nil
+	return nil
+}
+
+func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
+	if pc.SignalingState() == webrtc.SignalingStateStable {
+		sdp, err := pc.CreateOffer(nil)
+		if err != nil {
+			return err
+		}
+
+		err = pc.SetLocalDescription(sdp)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
