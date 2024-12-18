@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"io"
 	"slices"
+	"time"
 )
 
 const (
@@ -272,6 +273,15 @@ func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
 		if err != nil {
 			return err
 		}
+
+		gatheringComplete := webrtc.GatheringCompletePromise(pc)
+
+		// Workaround, implement Ice Trickling later
+		select {
+		case <-gatheringComplete:
+		case <-time.After(time.Second):
+		}
+
 	}
 
 	return nil
