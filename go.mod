@@ -5,7 +5,7 @@ go 1.23.2
 require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/joho/godotenv v1.5.1
-	gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241216224328-5a3460a9d6e1
+	gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241218221556-88c12b63d25e
 	gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241207185328-fa616e2298df
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.68.1

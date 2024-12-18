@@ -20,6 +20,16 @@ const (
 	dispatcherUsername = "dispatcher"
 )
 
+var (
+	config = webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+)
+
 type CoordinatorInteractor struct {
 	logger   logger.Logger
 	GrpcHost string
@@ -197,11 +207,11 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 						return err
 					}
 
-					i.UsersPeers[user] = pc
-				}
+					if err := i.createDatachannel(pc); err != nil {
+						return err
+					}
 
-				if err := i.createDatachannel(pc); err != nil {
-					return err
+					i.UsersPeers[user] = pc
 				}
 
 				if err := i.createOffer(pc); err != nil {
@@ -228,19 +238,33 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+		case *proto.RoomMethod_SdpReceived:
+			update := m.SdpReceived
+			var user User
+
+			for peerUser, _ := range i.UsersPeers {
+				if peerUser.Name == update.From {
+					user = peerUser
+					break
+				}
+			}
+
+			if user == (User{}) {
+				return fmt.Errorf("no such user peer")
+			}
+
+			pc := i.UsersPeers[user]
+			sdp := webrtc.SessionDescription{Type: webrtc.NewSDPType(update.Type), SDP: update.Sdp}
+
+			err := i.acceptAnswer(pc, sdp)
+			if err != nil {
+				return err
+			}
 		}
 	}
 }
 
 func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnection, error) {
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
-			},
-		},
-	}
-
 	pc, err := webrtc.NewPeerConnection(config)
 	if err != nil {
 		return nil, err
@@ -256,7 +280,27 @@ func (i *DispatcherInteractor) createDatachannel(pc *webrtc.PeerConnection) erro
 	}
 
 	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		fmt.Printf("Received message: %s\n", msg.Data)
+		i.logger.Debug(context.Background(), "received message", zap.String("text", string(msg.Data)))
+	})
+
+	dataChannel.OnOpen(func() {
+		ticker := time.NewTicker(time.Second * 5)
+
+		for {
+			select {
+			case <-ticker.C:
+				if dataChannel.ReadyState() == webrtc.DataChannelStateClosed {
+					return
+				}
+
+				err := dataChannel.SendText("ping")
+				if err != nil {
+					i.logger.Error(context.Background(), "couldnt send a ping")
+					return
+				}
+				i.logger.Debug(context.Background(), "sent a ping through datachannel")
+			}
+		}
 	})
 
 	return nil
@@ -282,6 +326,15 @@ func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
 		case <-time.After(time.Second):
 		}
 
+	}
+
+	return nil
+}
+
+func (i *DispatcherInteractor) acceptAnswer(pc *webrtc.PeerConnection, answer webrtc.SessionDescription) error {
+	err := pc.SetRemoteDescription(answer)
+	if err != nil {
+		return err
 	}
 
 	return nil
