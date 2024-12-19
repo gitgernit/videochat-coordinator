@@ -2,8 +2,10 @@ package dispatchers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	"gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go/proto"
@@ -269,9 +271,11 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 	}
 
 	pc.OnTrack(func(remote *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		i.logger.Debug(context.Background(), "Received a track")
-
-		trackLocal, err := webrtc.NewTrackLocalStaticRTP(remote.Codec().RTPCodecCapability, remote.ID(), remote.StreamID())
+		trackLocal, err := webrtc.NewTrackLocalStaticRTP(
+			remote.Codec().RTPCodecCapability,
+			remote.ID(),
+			remote.StreamID(),
+		)
 		if err != nil {
 			i.logger.Error(context.Background(), "couldnt create local static rtp track", zap.Error(err))
 		}
@@ -291,11 +295,36 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 			i.logger.Error(context.Background(), "couldnt signal users", zap.Error(err))
 		}
 
+		go func() {
+			for range time.NewTicker(time.Second * 3).C {
+				err := i.dispatchKeyframe(pc)
+				if errors.Is(err, io.ErrClosedPipe) {
+					return
+				}
+				if err != nil {
+					i.logger.Error(context.Background(), "couldnt dispatch keyframe", zap.Error(err))
+					return
+				}
+			}
+		}()
+
 		buf := make([]byte, 2048)
 		rtpPkt := &rtp.Packet{}
 
+		err = pc.WriteRTCP([]rtcp.Packet{
+			&rtcp.PictureLossIndication{
+				MediaSSRC: uint32(receiver.Track().SSRC()),
+			},
+		})
+		if err != nil {
+			i.logger.Error(context.Background(), "couldnt request keyframe", zap.Error(err))
+		}
+
 		for {
 			read, _, err := remote.Read(buf)
+			if err == io.EOF {
+				return
+			}
 			if err != nil {
 				i.logger.Error(context.Background(), "failed to read rtp packets from remote", zap.Error(err))
 				return
@@ -415,6 +444,25 @@ func (i *DispatcherInteractor) signalUsers() error {
 	err := i.stream.Send(method)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (i *DispatcherInteractor) dispatchKeyframe(pc *webrtc.PeerConnection) error {
+	for _, receiver := range pc.GetReceivers() {
+		if receiver.Track() == nil {
+			continue
+		}
+
+		err := pc.WriteRTCP([]rtcp.Packet{
+			&rtcp.PictureLossIndication{
+				MediaSSRC: uint32(receiver.Track().SSRC()),
+			},
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
