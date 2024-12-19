@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"io"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -106,6 +107,7 @@ func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID strin
 type DispatcherInteractor struct {
 	logger     logger.Logger
 	stream     proto.RoomsService_JoinRoomClient
+	mutex      *sync.Mutex
 	UsersPeers map[User]*webrtc.PeerConnection
 	RoomID     string
 	GrpcHost   string
@@ -115,6 +117,7 @@ type DispatcherInteractor struct {
 func NewDispatcherInteractor(logger logger.Logger, roomID string, grpcHost string, grpcPort int) (*DispatcherInteractor, error) {
 	return &DispatcherInteractor{
 		logger:     logger,
+		mutex:      &sync.Mutex{},
 		UsersPeers: make(map[User]*webrtc.PeerConnection),
 		RoomID:     roomID,
 		GrpcHost:   grpcHost,
@@ -171,7 +174,6 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 			i.logger.Debug(ctx, "room users received", zap.Any("room_users", update.Users))
 
 			roomUsers := make([]User, 0, len(update.Users)-1)
-			//sdps := make([]*proto.SDP, 0, len(roomUsers))
 
 			for _, protoUser := range update.Users {
 				if protoUser.Username == dispatcherUsername {
@@ -218,10 +220,6 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 					}
 
 					i.UsersPeers[user] = pc
-				}
-
-				if err := i.createOffer(pc); err != nil {
-					return err
 				}
 			}
 
@@ -270,7 +268,9 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 		}
 	}
 
-	pc.OnTrack(func(remote *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		i.logger.Debug(context.Background(), "received a track", zap.String("kind", remote.Kind().String()), zap.String("id", remote.ID()), zap.String("stream_id", remote.StreamID()))
+
 		trackLocal, err := webrtc.NewTrackLocalStaticRTP(
 			remote.Codec().RTPCodecCapability,
 			remote.ID(),
@@ -278,21 +278,19 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 		)
 		if err != nil {
 			i.logger.Error(context.Background(), "couldnt create local static rtp track", zap.Error(err))
+			return
 		}
 
 		_, err = pc.AddTrack(trackLocal)
 		if err != nil {
 			i.logger.Error(context.Background(), "couldnt add track to peer connection", zap.Error(err))
-		}
-
-		err = i.createOffer(pc)
-		if err != nil {
-			i.logger.Error(context.Background(), "couldnt create offer", zap.Error(err))
+			return
 		}
 
 		err = i.signalUsers()
 		if err != nil {
 			i.logger.Error(context.Background(), "couldnt signal users", zap.Error(err))
+			return
 		}
 
 		go func() {
@@ -308,17 +306,17 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 			}
 		}()
 
+		//err = pc.WriteRTCP([]rtcp.Packet{
+		//	&rtcp.PictureLossIndication{
+		//		MediaSSRC: uint32(receiver.Track().SSRC()),
+		//	},
+		//})
+		//if err != nil {
+		//	i.logger.Error(context.Background(), "couldnt request keyframe", zap.Error(err))
+		//}
+
 		buf := make([]byte, 2048)
 		rtpPkt := &rtp.Packet{}
-
-		err = pc.WriteRTCP([]rtcp.Packet{
-			&rtcp.PictureLossIndication{
-				MediaSSRC: uint32(receiver.Track().SSRC()),
-			},
-		})
-		if err != nil {
-			i.logger.Error(context.Background(), "couldnt request keyframe", zap.Error(err))
-		}
 
 		for {
 			read, _, err := remote.Read(buf)
@@ -359,51 +357,60 @@ func (i *DispatcherInteractor) createDatachannel(pc *webrtc.PeerConnection) erro
 	})
 
 	dataChannel.OnOpen(func() {
-		ticker := time.NewTicker(time.Second * 10)
-
-		for {
-			select {
-			case <-ticker.C:
-				if dataChannel.ReadyState() == webrtc.DataChannelStateClosed {
-					return
-				}
-
-				err := dataChannel.SendText("ping")
-				if err != nil {
-					i.logger.Error(context.Background(), "couldnt send a ping")
-					return
-				}
-				i.logger.Debug(context.Background(), "sent a ping through datachannel")
-			}
-		}
+		//ticker := time.NewTicker(time.Second * 10)
+		//
+		//for {
+		//	select {
+		//	case <-ticker.C:
+		//		if dataChannel.ReadyState() == webrtc.DataChannelStateClosed {
+		//			return
+		//		}
+		//
+		//		err := dataChannel.SendText("ping")
+		//		if err != nil {
+		//			i.logger.Error(context.Background(), "couldnt send a ping")
+		//			return
+		//		}
+		//		i.logger.Debug(context.Background(), "sent a ping through datachannel")
+		//	}
+		//}
 	})
 
 	return nil
 }
 
 func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
-	if pc.SignalingState() == webrtc.SignalingStateStable {
-		sdp, err := pc.CreateOffer(nil)
-		if err != nil {
-			return err
-		}
+	timeout := time.After(3 * time.Second)
+	tick := time.Tick(100 * time.Millisecond)
 
-		err = pc.SetLocalDescription(sdp)
-		if err != nil {
-			return err
-		}
-
-		gatheringComplete := webrtc.GatheringCompletePromise(pc)
-
-		// Workaround, implement Ice Trickling later
+	// Wait for the signaling state to become stable
+	for {
 		select {
-		case <-gatheringComplete:
-		case <-time.After(time.Second):
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for signaling state to become stable")
+		case <-tick:
+			if pc.SignalingState() == webrtc.SignalingStateStable {
+				sdp, err := pc.CreateOffer(nil)
+				if err != nil {
+					return err
+				}
+
+				err = pc.SetLocalDescription(sdp)
+				if err != nil {
+					return err
+				}
+
+				gatheringComplete := webrtc.GatheringCompletePromise(pc)
+
+				// Workaround, implement Ice Trickling later
+				select {
+				case <-gatheringComplete:
+				case <-time.After(time.Second):
+				}
+				return nil
+			}
 		}
-
 	}
-
-	return nil
 }
 
 func (i *DispatcherInteractor) acceptAnswer(pc *webrtc.PeerConnection, answer webrtc.SessionDescription) error {
@@ -418,11 +425,20 @@ func (i *DispatcherInteractor) acceptAnswer(pc *webrtc.PeerConnection, answer we
 }
 
 func (i *DispatcherInteractor) signalUsers() error {
+	i.mutex.Lock()
+	defer i.mutex.Unlock()
+
 	sdps := make([]*proto.SDP, 0, len(i.UsersPeers))
 
 	for user, pc := range i.UsersPeers {
 		if user.Name == dispatcherUsername {
 			continue
+		}
+
+		err := i.createOffer(pc)
+		if err != nil {
+			i.logger.Error(context.Background(), "couldnt create offer", zap.Error(err))
+			return err
 		}
 
 		sdp := pc.LocalDescription()
