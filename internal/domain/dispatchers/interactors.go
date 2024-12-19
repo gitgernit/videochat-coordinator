@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	"gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go/proto"
 	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
@@ -102,6 +103,7 @@ func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID strin
 
 type DispatcherInteractor struct {
 	logger     logger.Logger
+	stream     proto.RoomsService_JoinRoomClient
 	UsersPeers map[User]*webrtc.PeerConnection
 	RoomID     string
 	GrpcHost   string
@@ -146,6 +148,8 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 		return err
 	}
 
+	i.stream = stream
+
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
@@ -165,7 +169,7 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 			i.logger.Debug(ctx, "room users received", zap.Any("room_users", update.Users))
 
 			roomUsers := make([]User, 0, len(update.Users)-1)
-			sdps := make([]*proto.SDP, 0, len(roomUsers))
+			//sdps := make([]*proto.SDP, 0, len(roomUsers))
 
 			for _, protoUser := range update.Users {
 				if protoUser.Username == dispatcherUsername {
@@ -217,24 +221,9 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 				if err := i.createOffer(pc); err != nil {
 					return err
 				}
-
-				sdp := pc.LocalDescription()
-				sdps = append(sdps, &proto.SDP{
-					Type:     sdp.Type.String(),
-					Sdp:      sdp.SDP,
-					Username: user.Name,
-				})
 			}
 
-			method := &proto.RoomMethod{
-				Method: &proto.RoomMethod_SendSdp{
-					SendSdp: &proto.SendSDP{
-						Sdp: sdps,
-					},
-				},
-			}
-
-			err := stream.Send(method)
+			err := i.signalUsers()
 			if err != nil {
 				return err
 			}
@@ -270,6 +259,63 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 		return nil, err
 	}
 
+	for _, typ := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio} {
+		if _, err := pc.AddTransceiverFromKind(typ, webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionRecvonly,
+		}); err != nil {
+			i.logger.Error(context.Background(), "Failed to add transceiver")
+			return nil, err
+		}
+	}
+
+	pc.OnTrack(func(remote *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		i.logger.Debug(context.Background(), "Received a track")
+
+		trackLocal, err := webrtc.NewTrackLocalStaticRTP(remote.Codec().RTPCodecCapability, remote.ID(), remote.StreamID())
+		if err != nil {
+			i.logger.Error(context.Background(), "couldnt create local static rtp track", zap.Error(err))
+		}
+
+		_, err = pc.AddTrack(trackLocal)
+		if err != nil {
+			i.logger.Error(context.Background(), "couldnt add track to peer connection", zap.Error(err))
+		}
+
+		err = i.createOffer(pc)
+		if err != nil {
+			i.logger.Error(context.Background(), "couldnt create offer", zap.Error(err))
+		}
+
+		err = i.signalUsers()
+		if err != nil {
+			i.logger.Error(context.Background(), "couldnt signal users", zap.Error(err))
+		}
+
+		buf := make([]byte, 2048)
+		rtpPkt := &rtp.Packet{}
+
+		for {
+			read, _, err := remote.Read(buf)
+			if err != nil {
+				i.logger.Error(context.Background(), "failed to read rtp packets from remote", zap.Error(err))
+				return
+			}
+
+			if err = rtpPkt.Unmarshal(buf[:read]); err != nil {
+				i.logger.Error(context.Background(), "failed to unmarshal incoming RTP packet", zap.Error(err))
+				return
+			}
+
+			rtpPkt.Extension = false
+			rtpPkt.Extensions = nil
+
+			if err = trackLocal.WriteRTP(rtpPkt); err != nil {
+				i.logger.Error(context.Background(), "couldnt write rtp packets", zap.Error(err))
+				return
+			}
+		}
+	})
+
 	return pc, nil
 }
 
@@ -284,7 +330,7 @@ func (i *DispatcherInteractor) createDatachannel(pc *webrtc.PeerConnection) erro
 	})
 
 	dataChannel.OnOpen(func() {
-		ticker := time.NewTicker(time.Second * 5)
+		ticker := time.NewTicker(time.Second * 10)
 
 		for {
 			select {
@@ -332,7 +378,41 @@ func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
 }
 
 func (i *DispatcherInteractor) acceptAnswer(pc *webrtc.PeerConnection, answer webrtc.SessionDescription) error {
-	err := pc.SetRemoteDescription(answer)
+	if pc.SignalingState() != webrtc.SignalingStateStable {
+		err := pc.SetRemoteDescription(answer)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (i *DispatcherInteractor) signalUsers() error {
+	sdps := make([]*proto.SDP, 0, len(i.UsersPeers))
+
+	for user, pc := range i.UsersPeers {
+		if user.Name == dispatcherUsername {
+			continue
+		}
+
+		sdp := pc.LocalDescription()
+		sdps = append(sdps, &proto.SDP{
+			Type:     sdp.Type.String(),
+			Sdp:      sdp.SDP,
+			Username: user.Name,
+		})
+	}
+
+	method := &proto.RoomMethod{
+		Method: &proto.RoomMethod_SendSdp{
+			SendSdp: &proto.SendSDP{
+				Sdp: sdps,
+			},
+		},
+	}
+
+	err := i.stream.Send(method)
 	if err != nil {
 		return err
 	}
