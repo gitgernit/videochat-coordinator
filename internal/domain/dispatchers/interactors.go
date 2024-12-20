@@ -201,6 +201,14 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 
 				if !slices.Contains(roomUsers, user) {
 					delete(i.UsersPeers, user)
+
+					for _, trackRemote := range i.Tracks[user] {
+						err := i.forwarder.Unbind(trackRemote)
+						if err != nil {
+							return err
+						}
+					}
+
 					delete(i.Tracks, user)
 					err := pc.Close()
 					if err != nil {
@@ -354,7 +362,7 @@ func (i *DispatcherInteractor) createDatachannel(pc *webrtc.PeerConnection) erro
 }
 
 func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
-	timeout := time.After(3 * time.Second)
+	timeout := time.After(10 * time.Second)
 	tick := time.Tick(100 * time.Millisecond)
 
 	// Wait for the signaling state to become stable
@@ -379,7 +387,7 @@ func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
 				// Workaround, implement Ice Trickling later
 				select {
 				case <-gatheringComplete:
-				case <-time.After(time.Second):
+				case <-time.After(time.Millisecond * 250):
 				}
 				return nil
 			}
@@ -491,6 +499,10 @@ func (i *DispatcherInteractor) initializeTrack(pc *webrtc.PeerConnection, remote
 			if err != nil {
 				return err
 			}
+			err = sender.Stop()
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if sender.Track().ID() == remote.ID() {
@@ -564,11 +576,25 @@ func (f *RTPForwarder) Bind(local *webrtc.TrackLocalStaticRTP, remote *webrtc.Tr
 	return nil
 }
 
+func (f *RTPForwarder) Unbind(remote *webrtc.TrackRemote) error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	delete(f.remotes, remote)
+
+	return nil
+}
+
 func (f *RTPForwarder) forward(remote *webrtc.TrackRemote) {
 	buf := make([]byte, 2048)
 	rtpPkt := &rtp.Packet{}
 
 	for {
+		_, ok := f.remotes[remote]
+		if !ok {
+			return
+		}
+
 		read, _, err := remote.Read(buf)
 		if err == io.EOF {
 			return
@@ -587,6 +613,7 @@ func (f *RTPForwarder) forward(remote *webrtc.TrackRemote) {
 		rtpPkt.Extensions = nil
 
 		f.mutex.Lock()
+		fmt.Println(f.remotes)
 		for _, local := range f.remotes[remote] {
 			if err = local.WriteRTP(rtpPkt); err != nil {
 				f.logger.Error(context.Background(), "couldnt write rtp packets", zap.Error(err))
