@@ -32,6 +32,7 @@ var (
 			},
 		},
 	}
+	TrackAlreadyExistsErr = fmt.Errorf("track alreadly exists")
 )
 
 type CoordinatorInteractor struct {
@@ -107,8 +108,10 @@ func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID strin
 type DispatcherInteractor struct {
 	logger     logger.Logger
 	stream     proto.RoomsService_JoinRoomClient
+	forwarder  *RTPForwarder
 	mutex      *sync.Mutex
 	UsersPeers map[User]*webrtc.PeerConnection
+	Tracks     map[User][]*webrtc.TrackRemote
 	RoomID     string
 	GrpcHost   string
 	GrpcPort   int
@@ -118,7 +121,9 @@ func NewDispatcherInteractor(logger logger.Logger, roomID string, grpcHost strin
 	return &DispatcherInteractor{
 		logger:     logger,
 		mutex:      &sync.Mutex{},
+		forwarder:  NewRTPForwarder(logger),
 		UsersPeers: make(map[User]*webrtc.PeerConnection),
+		Tracks:     make(map[User][]*webrtc.TrackRemote),
 		RoomID:     roomID,
 		GrpcHost:   grpcHost,
 		GrpcPort:   grpcPort,
@@ -196,6 +201,7 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 
 				if !slices.Contains(roomUsers, user) {
 					delete(i.UsersPeers, user)
+					delete(i.Tracks, user)
 					err := pc.Close()
 					if err != nil {
 						i.logger.Error(ctx, "couldnt close inactive peer connection")
@@ -270,78 +276,46 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 
 	pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		i.logger.Debug(context.Background(), "received a track", zap.String("kind", remote.Kind().String()), zap.String("id", remote.ID()), zap.String("stream_id", remote.StreamID()))
+		var user User
 
-		trackLocal, err := webrtc.NewTrackLocalStaticRTP(
-			remote.Codec().RTPCodecCapability,
-			remote.ID(),
-			remote.StreamID(),
-		)
-		if err != nil {
-			i.logger.Error(context.Background(), "couldnt create local static rtp track", zap.Error(err))
+		for u, p := range i.UsersPeers {
+			if pc == p {
+				user = u
+				break
+			}
+		}
+
+		if user == (User{}) {
+			i.logger.Error(context.Background(), "couldnt find a user corresponding to the peer connection")
 			return
 		}
 
-		_, err = pc.AddTrack(trackLocal)
-		if err != nil {
-			i.logger.Error(context.Background(), "couldnt add track to peer connection", zap.Error(err))
-			return
+		userTracks, ok := i.Tracks[user]
+		if !ok {
+			i.Tracks[user] = make([]*webrtc.TrackRemote, 0, 1)
 		}
+		userTracks = append(userTracks, remote)
+		i.Tracks[user] = userTracks
 
-		err = i.signalUsers()
+		err := i.signalUsers()
 		if err != nil {
 			i.logger.Error(context.Background(), "couldnt signal users", zap.Error(err))
 			return
 		}
+	})
 
-		go func() {
-			for range time.NewTicker(time.Second * 3).C {
-				err := i.dispatchKeyframe(pc)
-				if errors.Is(err, io.ErrClosedPipe) {
-					return
-				}
-				if err != nil {
-					i.logger.Error(context.Background(), "couldnt dispatch keyframe", zap.Error(err))
-					return
-				}
-			}
-		}()
-
-		//err = pc.WriteRTCP([]rtcp.Packet{
-		//	&rtcp.PictureLossIndication{
-		//		MediaSSRC: uint32(receiver.Track().SSRC()),
-		//	},
-		//})
-		//if err != nil {
-		//	i.logger.Error(context.Background(), "couldnt request keyframe", zap.Error(err))
-		//}
-
-		buf := make([]byte, 2048)
-		rtpPkt := &rtp.Packet{}
-
-		for {
-			read, _, err := remote.Read(buf)
-			if err == io.EOF {
+	go func() {
+		for range time.NewTicker(time.Second * 3).C {
+			err := i.dispatchKeyframe(pc)
+			if errors.Is(err, io.ErrClosedPipe) {
 				return
 			}
 			if err != nil {
-				i.logger.Error(context.Background(), "failed to read rtp packets from remote", zap.Error(err))
-				return
-			}
-
-			if err = rtpPkt.Unmarshal(buf[:read]); err != nil {
-				i.logger.Error(context.Background(), "failed to unmarshal incoming RTP packet", zap.Error(err))
-				return
-			}
-
-			rtpPkt.Extension = false
-			rtpPkt.Extensions = nil
-
-			if err = trackLocal.WriteRTP(rtpPkt); err != nil {
-				i.logger.Error(context.Background(), "couldnt write rtp packets", zap.Error(err))
+				i.logger.Error(context.Background(), "couldnt dispatch keyframe", zap.Error(err))
 				return
 			}
 		}
-	})
+	}()
 
 	return pc, nil
 }
@@ -435,11 +409,17 @@ func (i *DispatcherInteractor) signalUsers() error {
 			continue
 		}
 
-		err := i.createOffer(pc)
+		err := i.initializeTracks(pc)
 		if err != nil {
-			i.logger.Error(context.Background(), "couldnt create offer", zap.Error(err))
 			return err
 		}
+		i.logger.Debug(context.Background(), "initialized tracks")
+
+		err = i.createOffer(pc)
+		if err != nil {
+			return err
+		}
+		i.logger.Debug(context.Background(), "created offer")
 
 		sdp := pc.LocalDescription()
 		sdps = append(sdps, &proto.SDP{
@@ -482,4 +462,137 @@ func (i *DispatcherInteractor) dispatchKeyframe(pc *webrtc.PeerConnection) error
 	}
 
 	return nil
+}
+
+func (i *DispatcherInteractor) initializeTracks(pc *webrtc.PeerConnection) error {
+	for user, tracks := range i.Tracks {
+		msid := user.Name + "-" + uuid.New().String()
+
+		for _, track := range tracks {
+			err := i.initializeTrack(pc, track, msid)
+			if errors.Is(err, TrackAlreadyExistsErr) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (i *DispatcherInteractor) initializeTrack(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote, msid string) error {
+	senders := pc.GetSenders()
+
+	for _, sender := range senders {
+		if sender.Track() == nil {
+			err := pc.RemoveTrack(sender)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if sender.Track().ID() == remote.ID() {
+			return TrackAlreadyExistsErr
+		}
+	}
+
+	trackLocal, err := webrtc.NewTrackLocalStaticRTP(
+		remote.Codec().RTPCodecCapability,
+		remote.ID(),
+		msid,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = pc.AddTrack(trackLocal)
+	if err != nil {
+		return err
+	}
+	i.logger.Debug(context.Background(), "added a track", zap.String("id", trackLocal.ID()))
+
+	err = i.forwarder.Bind(trackLocal, remote)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type RTPForwarder struct {
+	remotes map[*webrtc.TrackRemote][]*webrtc.TrackLocalStaticRTP
+	logger  logger.Logger
+	mutex   *sync.Mutex
+}
+
+var (
+	TrackAlreadyBoundErr = fmt.Errorf("track already bound to a remote")
+)
+
+func NewRTPForwarder(logger logger.Logger) *RTPForwarder {
+	return &RTPForwarder{
+		remotes: make(map[*webrtc.TrackRemote][]*webrtc.TrackLocalStaticRTP),
+		logger:  logger,
+		mutex:   &sync.Mutex{},
+	}
+}
+
+func (f *RTPForwarder) Bind(local *webrtc.TrackLocalStaticRTP, remote *webrtc.TrackRemote) error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	_, ok := f.remotes[remote]
+	if !ok {
+		f.remotes[remote] = make([]*webrtc.TrackLocalStaticRTP, 0, 1)
+		defer func() {
+			go f.forward(remote)
+		}()
+	}
+
+	locals := f.remotes[remote]
+
+	if slices.Contains(locals, local) {
+		return TrackAlreadyBoundErr
+	}
+
+	locals = append(locals, local)
+
+	f.remotes[remote] = locals
+
+	return nil
+}
+
+func (f *RTPForwarder) forward(remote *webrtc.TrackRemote) {
+	buf := make([]byte, 2048)
+	rtpPkt := &rtp.Packet{}
+
+	for {
+		read, _, err := remote.Read(buf)
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			f.logger.Error(context.Background(), "failed to read rtp packets from remote", zap.Error(err))
+			return
+		}
+
+		if err = rtpPkt.Unmarshal(buf[:read]); err != nil {
+			f.logger.Error(context.Background(), "failed to unmarshal incoming RTP packet", zap.Error(err))
+			return
+		}
+
+		rtpPkt.Extension = false
+		rtpPkt.Extensions = nil
+
+		f.mutex.Lock()
+		for _, local := range f.remotes[remote] {
+			if err = local.WriteRTP(rtpPkt); err != nil {
+				f.logger.Error(context.Background(), "couldnt write rtp packets", zap.Error(err))
+				return
+			}
+		}
+		f.mutex.Unlock()
+	}
 }
