@@ -613,7 +613,6 @@ func (f *RTPForwarder) forward(remote *webrtc.TrackRemote) {
 		rtpPkt.Extensions = nil
 
 		f.mutex.Lock()
-		fmt.Println(f.remotes)
 		for _, local := range f.remotes[remote] {
 			if err = local.WriteRTP(rtpPkt); err != nil {
 				f.logger.Error(context.Background(), "couldnt write rtp packets", zap.Error(err))
