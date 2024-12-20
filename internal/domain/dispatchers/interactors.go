@@ -106,27 +106,29 @@ func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID strin
 }
 
 type DispatcherInteractor struct {
-	logger     logger.Logger
-	stream     proto.RoomsService_JoinRoomClient
-	forwarder  *RTPForwarder
-	mutex      *sync.Mutex
-	UsersPeers map[User]*webrtc.PeerConnection
-	Tracks     map[User][]*webrtc.TrackRemote
-	RoomID     string
-	GrpcHost   string
-	GrpcPort   int
+	logger       logger.Logger
+	stream       proto.RoomsService_JoinRoomClient
+	forwarder    *RTPForwarder
+	mutex        *sync.Mutex
+	UsersPeers   map[User]*webrtc.PeerConnection
+	RemoteTracks map[User][]*webrtc.TrackRemote
+	LocalTracks  map[User][]*webrtc.TrackLocalStaticRTP
+	RoomID       string
+	GrpcHost     string
+	GrpcPort     int
 }
 
 func NewDispatcherInteractor(logger logger.Logger, roomID string, grpcHost string, grpcPort int) (*DispatcherInteractor, error) {
 	return &DispatcherInteractor{
-		logger:     logger,
-		mutex:      &sync.Mutex{},
-		forwarder:  NewRTPForwarder(logger),
-		UsersPeers: make(map[User]*webrtc.PeerConnection),
-		Tracks:     make(map[User][]*webrtc.TrackRemote),
-		RoomID:     roomID,
-		GrpcHost:   grpcHost,
-		GrpcPort:   grpcPort,
+		logger:       logger,
+		mutex:        &sync.Mutex{},
+		forwarder:    NewRTPForwarder(logger),
+		UsersPeers:   make(map[User]*webrtc.PeerConnection),
+		RemoteTracks: make(map[User][]*webrtc.TrackRemote),
+		LocalTracks:  make(map[User][]*webrtc.TrackLocalStaticRTP),
+		RoomID:       roomID,
+		GrpcHost:     grpcHost,
+		GrpcPort:     grpcPort,
 	}, nil
 }
 
@@ -200,20 +202,31 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 				}
 
 				if !slices.Contains(roomUsers, user) {
-					delete(i.UsersPeers, user)
+					err := pc.Close()
+					if err != nil {
+						i.logger.Error(ctx, "couldnt close inactive peer connection", zap.Error(err))
+					}
 
-					for _, trackRemote := range i.Tracks[user] {
+					for _, trackRemote := range i.RemoteTracks[user] {
 						err := i.forwarder.Unbind(trackRemote)
 						if err != nil {
-							return err
+							i.logger.Error(ctx, "couldnt unbind a remote track", zap.Error(err))
 						}
 					}
 
-					delete(i.Tracks, user)
-					err := pc.Close()
-					if err != nil {
-						i.logger.Error(ctx, "couldnt close inactive peer connection")
+					for u, p := range i.UsersPeers {
+						if u == user {
+							continue
+						}
+
+						err = i.cleanupTracks(p, user)
+						if err != nil {
+							i.logger.Error(ctx, "couldnt cleanup a track", zap.Error(err))
+						}
 					}
+
+					delete(i.RemoteTracks, user)
+					delete(i.UsersPeers, user)
 				}
 			}
 
@@ -298,12 +311,12 @@ func (i *DispatcherInteractor) initializePeerConnection() (*webrtc.PeerConnectio
 			return
 		}
 
-		userTracks, ok := i.Tracks[user]
+		userTracks, ok := i.RemoteTracks[user]
 		if !ok {
-			i.Tracks[user] = make([]*webrtc.TrackRemote, 0, 1)
+			i.RemoteTracks[user] = make([]*webrtc.TrackRemote, 0, 1)
 		}
 		userTracks = append(userTracks, remote)
-		i.Tracks[user] = userTracks
+		i.RemoteTracks[user] = userTracks
 
 		err := i.signalUsers()
 		if err != nil {
@@ -362,14 +375,15 @@ func (i *DispatcherInteractor) createDatachannel(pc *webrtc.PeerConnection) erro
 }
 
 func (i *DispatcherInteractor) createOffer(pc *webrtc.PeerConnection) error {
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(30 * time.Second)
 	tick := time.Tick(100 * time.Millisecond)
 
 	// Wait for the signaling state to become stable
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("timeout waiting for signaling state to become stable")
+			i.logger.Error(context.Background(), "timeout waiting for signaling state to become stable")
+			return nil
 		case <-tick:
 			if pc.SignalingState() == webrtc.SignalingStateStable {
 				sdp, err := pc.CreateOffer(nil)
@@ -473,11 +487,9 @@ func (i *DispatcherInteractor) dispatchKeyframe(pc *webrtc.PeerConnection) error
 }
 
 func (i *DispatcherInteractor) initializeTracks(pc *webrtc.PeerConnection) error {
-	for user, tracks := range i.Tracks {
-		msid := user.Name + "-" + uuid.New().String()
-
+	for user, tracks := range i.RemoteTracks {
 		for _, track := range tracks {
-			err := i.initializeTrack(pc, track, msid)
+			err := i.initializeTrack(pc, track, user)
 			if errors.Is(err, TrackAlreadyExistsErr) {
 				continue
 			}
@@ -490,21 +502,11 @@ func (i *DispatcherInteractor) initializeTracks(pc *webrtc.PeerConnection) error
 	return nil
 }
 
-func (i *DispatcherInteractor) initializeTrack(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote, msid string) error {
+func (i *DispatcherInteractor) initializeTrack(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote, user User) error {
+	msid := user.Name + "-" + uuid.New().String()
 	senders := pc.GetSenders()
 
 	for _, sender := range senders {
-		if sender.Track() == nil {
-			err := pc.RemoveTrack(sender)
-			if err != nil {
-				return err
-			}
-			err = sender.Stop()
-			if err != nil {
-				return err
-			}
-			continue
-		}
 		if sender.Track().ID() == remote.ID() {
 			return TrackAlreadyExistsErr
 		}
@@ -519,15 +521,47 @@ func (i *DispatcherInteractor) initializeTrack(pc *webrtc.PeerConnection, remote
 		return err
 	}
 
+	_, ok := i.LocalTracks[user]
+	if !ok {
+		i.LocalTracks[user] = make([]*webrtc.TrackLocalStaticRTP, 0, 1)
+	}
+
+	localUserTracks := i.LocalTracks[user]
+	localUserTracks = append(localUserTracks, trackLocal)
+	i.LocalTracks[user] = localUserTracks
+
 	_, err = pc.AddTrack(trackLocal)
 	if err != nil {
 		return err
 	}
+
 	i.logger.Debug(context.Background(), "added a track", zap.String("id", trackLocal.ID()))
 
 	err = i.forwarder.Bind(trackLocal, remote)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (i *DispatcherInteractor) cleanupTracks(pc *webrtc.PeerConnection, from User) error {
+	senders := pc.GetSenders()
+
+	for _, sender := range senders {
+		track := sender.Track()
+
+		if track == nil || slices.Contains(i.LocalTracks[from], track.(*webrtc.TrackLocalStaticRTP)) {
+			err := pc.RemoveTrack(sender)
+			if err != nil {
+				return err
+			}
+
+			err = sender.Stop()
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
