@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"gitlab.crja72.ru/gospec/go5/coordinator/internal/domain/dispatchers"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"gitlab.crja72.ru/gospec/go5/coordinator/internal/config"
-	"gitlab.crja72.ru/gospec/go5/coordinator/internal/domain/pingpong"
 	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -28,9 +28,9 @@ func main() {
 		return
 	}
 
-	pingInteractor, err := pingpong.NewPingInteractor(mainLogger)
+	dispatchersInteractor, err := dispatchers.NewCoordinatorInteractor(mainLogger, cfg.GRPCServerHost, cfg.GRPCServerPort)
 	if err != nil {
-		mainLogger.Error(ctx, fmt.Sprintf("failed to initialise PingInteractor: %v", err))
+		mainLogger.Error(ctx, fmt.Sprintf("failed to initialise dispatchers CoordinatorInteractor: %v", err))
 		return
 	}
 
@@ -40,7 +40,7 @@ func main() {
 	mainLogger.Info(ctx, "successfully started")
 
 	go func() {
-		if err := pingInteractor.Start(ctx, cfg.GRPCServerHost, cfg.GRPCServerPort); err != nil {
+		if err := dispatchersInteractor.ListenForRooms(ctx); err != nil {
 			mainLogger.Error(ctx, err.Error())
 		}
 	}()
