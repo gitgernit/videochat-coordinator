@@ -507,6 +507,9 @@ func (i *DispatcherInteractor) initializeTrack(pc *webrtc.PeerConnection, remote
 	senders := pc.GetSenders()
 
 	for _, sender := range senders {
+		if sender.Track() == nil {
+			continue
+		}
 		if sender.Track().ID() == remote.ID() {
 			return TrackAlreadyExistsErr
 		}
