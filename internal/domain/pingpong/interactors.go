@@ -11,17 +11,17 @@ import (
 	"time"
 )
 
-type PingInteractor struct {
+type Interactor struct {
 	logger logger.Logger
 }
 
-func NewPingInteractor(logger logger.Logger) (*PingInteractor, error) {
-	return &PingInteractor{
+func NewInteractor(logger logger.Logger) (*Interactor, error) {
+	return &Interactor{
 		logger: logger,
 	}, nil
 }
 
-func (p *PingInteractor) Start(ctx context.Context, grpcHost string, grpcPort int) error {
+func (p Interactor) Start(ctx context.Context, grpcHost string, grpcPort int) error {
 	ticker := time.NewTicker(time.Second * 1)
 	defer ticker.Stop()
 
