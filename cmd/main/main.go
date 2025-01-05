@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"gitlab.crja72.ru/gospec/go5/coordinator/internal/domain/dispatchers"
+	"github.com/gitgernit/videochat-coordinator/internal/domain/dispatchers"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"gitlab.crja72.ru/gospec/go5/coordinator/internal/config"
-	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
+	"github.com/gitgernit/videochat-coordinator/internal/config"
+	"github.com/gitgernit/videochat-rooms/pkg/logger"
 	"go.uber.org/zap"
 )
 

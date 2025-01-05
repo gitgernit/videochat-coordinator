@@ -1,19 +1,22 @@
-module gitlab.crja72.ru/gospec/go5/coordinator
+module github.com/gitgernit/videochat-coordinator
 
 go 1.23.2
 
 require (
+	github.com/gitgernit/videochat-contracts/proto/rooms/go v0.0.0-20250105071859-4d6feb1284a2
+	github.com/gitgernit/videochat-rooms v0.0.0-20250105114803-5b859d6db852
+	github.com/google/uuid v1.6.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/joho/godotenv v1.5.1
-	gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go v0.0.0-20241218221556-88c12b63d25e
-	gitlab.crja72.ru/gospec/go5/rooms v0.0.0-20241207185328-fa616e2298df
+	github.com/pion/rtcp v1.2.15
+	github.com/pion/rtp v1.8.9
+	github.com/pion/webrtc/v4 v4.0.6
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.68.1
 )
 
 require (
 	github.com/BurntSushi/toml v1.2.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.4 // indirect
@@ -22,15 +25,12 @@ require (
 	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/mdns/v2 v2.0.7 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/rtcp v1.2.15 // indirect
-	github.com/pion/rtp v1.8.9 // indirect
 	github.com/pion/sctp v1.8.35 // indirect
 	github.com/pion/sdp/v3 v3.0.9 // indirect
 	github.com/pion/srtp/v3 v3.0.4 // indirect
 	github.com/pion/stun/v3 v3.0.0 // indirect
 	github.com/pion/transport/v3 v3.0.7 // indirect
 	github.com/pion/turn/v4 v4.0.0 // indirect
-	github.com/pion/webrtc/v4 v4.0.6 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/crypto v0.29.0 // indirect

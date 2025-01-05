@@ -3,8 +3,8 @@ package pingpong
 import (
 	"context"
 	"fmt"
-	"gitlab.crja72.ru/gospec/go5/contracts/proto/rooms/go/proto"
-	"gitlab.crja72.ru/gospec/go5/rooms/pkg/logger"
+	"github.com/gitgernit/videochat-contracts/proto/rooms/go/proto"
+	"github.com/gitgernit/videochat-rooms/pkg/logger"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
