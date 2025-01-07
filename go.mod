@@ -3,7 +3,7 @@ module github.com/gitgernit/videochat-coordinator
 go 1.23.2
 
 require (
-	github.com/gitgernit/videochat-contracts/proto/rooms/go v0.0.0-20250105071859-4d6feb1284a2
+	github.com/gitgernit/videochat-contracts/proto/rooms/go v0.0.0-20250106234027-f1fd748e7b98
 	github.com/gitgernit/videochat-rooms v0.0.0-20250105114803-5b859d6db852
 	github.com/google/uuid v1.6.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0

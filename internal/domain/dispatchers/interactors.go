@@ -80,17 +80,17 @@ func (i CoordinatorInteractor) ListenForRooms(ctx context.Context) error {
 			return err
 		}
 
-		i.logger.Debug(ctx, "received new room", zap.String("room_id", room.Id))
+		i.logger.Debug(ctx, "received new room", zap.String("room_name", room.Name))
 
-		err = i.SpawnDispatcher(ctx, room.Id)
+		err = i.SpawnDispatcher(ctx, room.Name)
 		if err != nil {
 			return err
 		}
 	}
 }
 
-func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID string) error {
-	dispatcherInteractor, err := NewDispatcherInteractor(i.logger, roomID, i.GrpcHost, i.GrpcPort)
+func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomName string) error {
+	dispatcherInteractor, err := NewDispatcherInteractor(i.logger, roomName, i.GrpcHost, i.GrpcPort)
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func (i CoordinatorInteractor) SpawnDispatcher(ctx context.Context, roomID strin
 	go func() {
 		err := dispatcherInteractor.Listen(ctx)
 		if err != nil {
-			i.logger.Error(ctx, "dispatcher returned an error", zap.String("room_id", roomID), zap.Error(err))
+			i.logger.Error(ctx, "dispatcher returned an error", zap.String("room_id", roomName), zap.Error(err))
 		}
 	}()
 
@@ -113,12 +113,12 @@ type DispatcherInteractor struct {
 	UsersPeers   map[User]*webrtc.PeerConnection
 	RemoteTracks map[User][]*webrtc.TrackRemote
 	LocalTracks  map[User][]*webrtc.TrackLocalStaticRTP
-	RoomID       string
+	RoomName     string
 	GrpcHost     string
 	GrpcPort     int
 }
 
-func NewDispatcherInteractor(logger logger.Logger, roomID string, grpcHost string, grpcPort int) (*DispatcherInteractor, error) {
+func NewDispatcherInteractor(logger logger.Logger, roomName string, grpcHost string, grpcPort int) (*DispatcherInteractor, error) {
 	return &DispatcherInteractor{
 		logger:       logger,
 		mutex:        &sync.Mutex{},
@@ -126,7 +126,7 @@ func NewDispatcherInteractor(logger logger.Logger, roomID string, grpcHost strin
 		UsersPeers:   make(map[User]*webrtc.PeerConnection),
 		RemoteTracks: make(map[User][]*webrtc.TrackRemote),
 		LocalTracks:  make(map[User][]*webrtc.TrackLocalStaticRTP),
-		RoomID:       roomID,
+		RoomName:     roomName,
 		GrpcHost:     grpcHost,
 		GrpcPort:     grpcPort,
 	}, nil
@@ -151,7 +151,7 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 
 	md := metadata.Pairs(
 		"username", dispatcherUsername,
-		"room_id", i.RoomID,
+		"room_name", i.RoomName,
 	)
 	ctx = metadata.NewOutgoingContext(ctx, md)
 
@@ -175,7 +175,7 @@ func (i *DispatcherInteractor) Listen(ctx context.Context) error {
 		switch m := method.(type) {
 		case *proto.RoomMethod_MessageReceived:
 			update := m.MessageReceived
-			i.logger.Debug(ctx, "message received", zap.String("text", update.Text), zap.String("username", update.Username), zap.String("room_id", i.RoomID))
+			i.logger.Debug(ctx, "message received", zap.String("text", update.Text), zap.String("username", update.Username), zap.String("room_id", i.RoomName))
 		case *proto.RoomMethod_RoomUsers_:
 			update := m.RoomUsers_
 			i.logger.Debug(ctx, "room users received", zap.Any("room_users", update.Users))

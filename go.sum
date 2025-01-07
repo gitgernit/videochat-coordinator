@@ -5,6 +5,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/gitgernit/videochat-contracts/proto/rooms/go v0.0.0-20250105071859-4d6feb1284a2 h1:VDhop/G68zW0iMh/x4s7pL+Vrfr5MWg2nSHBRCWq3BQ=
 github.com/gitgernit/videochat-contracts/proto/rooms/go v0.0.0-20250105071859-4d6feb1284a2/go.mod h1:DVGp7HHs/6a+DJjBYJ1fL+y5Glggh0psr3gduMQsnzc=
+github.com/gitgernit/videochat-contracts/proto/rooms/go v0.0.0-20250106234027-f1fd748e7b98 h1:Nv/oTsKV+J1Z94gFRIuM/h+Fs/hfMhhJxsrcMtfTcwQ=
+github.com/gitgernit/videochat-contracts/proto/rooms/go v0.0.0-20250106234027-f1fd748e7b98/go.mod h1:DVGp7HHs/6a+DJjBYJ1fL+y5Glggh0psr3gduMQsnzc=
 github.com/gitgernit/videochat-rooms v0.0.0-20250105114803-5b859d6db852 h1:hnnzB310nGyCfSKYv6CJ7JDAkoW/CFBVWlBixeW/fLA=
 github.com/gitgernit/videochat-rooms v0.0.0-20250105114803-5b859d6db852/go.mod h1:cz4ft2feU40XyzzbW73n2KEea4fYt+b96R+YnwisOtQ=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
